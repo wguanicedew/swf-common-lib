@@ -1,0 +1,6 @@
+[flake8]
+# Project flake8 configuration. Aligns with the settings previously added to pyproject.toml.
+max-line-length = 120
+extend-ignore = E203, W503
+exclude = .git,__pycache__,build,dist,.venv,venv,docs,config/full-chain.pem
+per-file-ignores = tests/*: D
