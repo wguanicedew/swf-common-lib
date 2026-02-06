@@ -306,6 +306,16 @@ class BaseAgent(stomp.ConnectionListener):
         """To be compatible with existing agent implementations that use self.conn to access the STOMP connection, we provide a property that returns the connection from the mq_subscriber."""
         return self.mq_subscriber.conn
     
+    @property
+    def mq_user(self):
+        """Convenience property to access the ActiveMQ username."""
+        return self.mq_subscriber.username
+    
+    @property
+    def mq_password(self):
+        """Convenience property to access the ActiveMQ password."""
+        return self.mq_subscriber.password
+    
     def run(self):
         """
         Connects to the message broker and runs the agent's main loop.
