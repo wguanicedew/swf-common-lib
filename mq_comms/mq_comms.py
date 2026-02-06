@@ -10,7 +10,7 @@ import logging
 
 ###################################################################
 mq_user = os.environ.get("ACTIVEMQ_USER", None)  # this will fail if not set
-mq_passwd = os.environ.get("ACTIVEMQ_PASSWD", None)
+mq_passwd = os.environ.get("ACTIVEMQ_PASSWORD", None)
 
 mq_port = int(os.environ.get("ACTIVEMQ_PORT", 61612))
 
@@ -51,7 +51,7 @@ class Messenger:
         self.client_id = client_id
 
         if not self.username or not self.password:
-            raise ValueError("MQ_USER and MQ_PASSWD environment variables must be set.")
+            raise ValueError("ACTIVEMQ_USER and ACTIVEMQ_PASSWORD environment variables must be set.")
 
         self.verbose = verbose
         if self.verbose:

@@ -300,6 +300,12 @@ class BaseAgent(stomp.ConnectionListener):
         self._subscribers[queue_name] = receiver
         return receiver
 
+    @property
+    def conn(self):
+        """Convenience property to access the STOMP connection."""
+        """To be compatible with existing agent implementations that use self.conn to access the STOMP connection, we provide a property that returns the connection from the mq_subscriber."""
+        return self.mq_subscriber.conn
+    
     def run(self):
         """
         Connects to the message broker and runs the agent's main loop.
