@@ -224,8 +224,6 @@ class BaseAgent(stomp.ConnectionListener):
         # Use HTTP URL for REST logging (no auth required)
         self.base_url = (os.getenv("SWF_MONITOR_HTTP_URL") or "").rstrip("/")
 
-        self.mq_subscriber = self.get_subscriber(self.subscription_queue)
-
         # Set up centralized REST logging
         self.logger = setup_rest_logging("base_agent", self.agent_name, self.base_url)
 
@@ -241,6 +239,8 @@ class BaseAgent(stomp.ConnectionListener):
         self._subscribers = {}  # Track registered subscribers
         self._subscribers[self.subscription_queue] = self.mq_subscriber
         self._publishers = {}  # Track registered publishers
+
+        self.mq_subscriber = self.get_subscriber(self.subscription_queue)
 
     def _log_extra(self, **kwargs):
         """
