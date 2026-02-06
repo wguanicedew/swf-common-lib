@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Optional
 from .api_utils import get_next_agent_id
 from .config_utils import load_testbed_config, TestbedConfigError
-from .mq_comms import mq_comms
+from mq_comms import mq_comms
 
 
 class APIError(Exception):
