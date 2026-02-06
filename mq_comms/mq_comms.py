@@ -9,18 +9,18 @@ import ssl
 import logging
 
 ###################################################################
-mq_user = os.environ.get("MQ_USER", None)  # this will fail if not set
-mq_passwd = os.environ.get("MQ_PASSWD", None)
+mq_user = os.environ.get("ACTIVEMQ_USER", None)  # this will fail if not set
+mq_passwd = os.environ.get("ACTIVEMQ_PASSWD", None)
 
-mq_port = int(os.environ.get("MQ_PORT", 61612))
+mq_port = int(os.environ.get("ACTIVEMQ_PORT", 61612))
 
-mq_host = os.environ.get("MQ_HOST", "pandaserver02.sdcc.bnl.gov")
-mq_cafile = os.environ.get("MQ_CAFILE", "")
-mq_use_ssl = os.environ.get("MQ_USE_SSL", "true").lower() in ("true", "1", "t")
+mq_host = os.environ.get("ACTIVEMQ_HOST", "pandaserver02.sdcc.bnl.gov")
+mq_cafile = os.environ.get("ACTIVEMQ_CAFILE", "")
+mq_use_ssl = os.environ.get("ACTIVEMQ_USE_SSL", "true").lower() in ("true", "1", "t")
 
-mq_durable = os.environ.get("MQ_DURABLE", "false").lower() in ("true", "1", "t")
-mq_subscription_name = os.environ.get("MQ_SUBSCRIPTION_NAME", "epic_streaming_testbed")
-mq_topic = os.environ.get("MQ_TOPIC", "epictopic")
+mq_durable = os.environ.get("ACTIVEMQ_DURABLE", "false").lower() in ("true", "1", "t")
+mq_subscription_name = os.environ.get("ACTIVEMQ_SUBSCRIPTION_NAME", "epic_streaming_testbed")
+mq_topic = os.environ.get("ACTIVEMQ_TOPIC", "epictopic")
 
 
 ###################################################################

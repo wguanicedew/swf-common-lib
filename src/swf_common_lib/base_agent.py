@@ -237,10 +237,10 @@ class BaseAgent(stomp.ConnectionListener):
             urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
         self._subscribers = {}  # Track registered subscribers
-        self._subscribers[self.subscription_queue] = self.mq_subscriber
         self._publishers = {}  # Track registered publishers
 
         self.mq_subscriber = self.get_subscriber(self.subscription_queue)
+        self._subscribers[self.subscription_queue] = self.mq_subscriber
 
     def _log_extra(self, **kwargs):
         """
