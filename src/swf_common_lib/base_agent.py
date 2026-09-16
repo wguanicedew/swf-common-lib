@@ -205,15 +205,17 @@ class BaseAgent(stomp.ConnectionListener):
         self.hostname = socket.gethostname()
         self.operational_state = 'STARTING'  # STARTING, READY, PROCESSING, EXITED
 
-        # Background execution (opt-in via run_in_background). The pool is created
-        # lazily, so an agent that never calls run_in_background is unaffected.
+        # Background execution (opt-in via run_in_background). Pools are created
+        # lazily per queue, so an agent that never calls run_in_background is
+        # unaffected, and independent queues can't starve each other.
         # See swf-testbed/docs/architecture_and_design_choices.md
         # § Blocking Handlers and Background Execution.
-        self._bg_executor: Optional[ThreadPoolExecutor] = None
+        self._bg_executor: dict[str, ThreadPoolExecutor] = {}
         self._bg_max_workers = int(os.getenv('SWF_AGENT_MAX_WORKERS', '4'))
-        self._bg_lock = threading.Lock()     # guards _bg_inflight and _bg_keys
-        self._bg_inflight = 0                # background tasks currently running
+        self._bg_lock = threading.Lock()     # guards _bg_inflight, _bg_keys, _bg_active
+        self._bg_inflight = 0                # background tasks currently running (all queues)
         self._bg_keys: set[str] = set()      # in-flight dedup keys
+        self._bg_active: dict[str, int] = {}  # queue -> tasks currently executing
         self._send_lock = threading.Lock()   # serialize bus sends across threads
 
         # Use HTTP URL for REST logging (no auth required)
@@ -375,9 +377,10 @@ class BaseAgent(stomp.ConnectionListener):
             # Drain in-flight background work before reporting EXITED / disconnecting,
             # so credentialed workers finish (and can still notify over the live bus).
             # Bounded in practice by each doer's own subprocess timeout.
-            if self._bg_executor is not None:
-                logging.info("Draining background worker pool...")
-                self._bg_executor.shutdown(wait=True)
+            if self._bg_executor:
+                logging.info("Draining background worker pools...")
+                for pool in self._bg_executor.values():
+                    pool.shutdown(wait=True)
 
             # Report exit status before disconnecting
             try:
@@ -560,23 +563,28 @@ class BaseAgent(stomp.ConnectionListener):
 
         return ProcessingContext()
 
-    def run_in_background(self, fn, *args, dedup_key=None, label=None, **kwargs):
-        """Run ``fn(*args, **kwargs)`` on the agent's bounded worker pool and
-        return immediately, freeing the STOMP receiver thread.
+    def run_in_background(self, fn, *args, dedup_key=None, label=None, queue='default', **kwargs):
+        """Run ``fn(*args, **kwargs)`` on one of the agent's bounded worker pools
+        and return immediately, freeing the STOMP receiver thread.
 
         Opt-in: an agent that never calls this is unaffected. Use it for handler
         work that blocks — a subprocess, or a long REST / Rucio / xrootd call —
         so one slow message cannot stall liveness pings or later messages.
 
+        - ``queue`` (optional): name of the worker pool to submit to (default
+          ``'default'``). Each distinct queue gets its own lazily-created
+          ``ThreadPoolExecutor`` with ``SWF_AGENT_MAX_WORKERS`` threads, so
+          slow work on one queue can't starve another.
         - Reentrant PROCESSING: the agent reports PROCESSING while any background
-          task is in flight, READY when none is.
+          task is in flight (on any queue), READY when none is.
         - Every exception in ``fn`` is caught and logged; a worker never dies
           silently.
         - ``dedup_key`` (optional): if a task with the same key is already in
           flight, this call is skipped and returns False — closing the
-          duplicate-work race that concurrency introduces.
+          duplicate-work race that concurrency introduces. Dedup keys are
+          tracked across all queues.
 
-        Calls with different keys can run concurrently: the pool has
+        Calls with different keys can run concurrently: each queue's pool has
         ``SWF_AGENT_MAX_WORKERS`` threads (default 4). ``dedup_key`` is not a
         lock and does not preserve the receiver thread's former serial
         semantics. For a safe first migration, set ``SWF_AGENT_MAX_WORKERS=1``.
@@ -598,17 +606,18 @@ class BaseAgent(stomp.ConnectionListener):
                     f"{self.agent_name} background '{label}' skipped: "
                     f"dedup_key {dedup_key!r} already in flight")
                 return False
-            if self._bg_executor is None:
-                self._bg_executor = ThreadPoolExecutor(
+            if queue not in self._bg_executor:
+                self._bg_executor[queue] = ThreadPoolExecutor(
                     max_workers=self._bg_max_workers,
-                    thread_name_prefix=f"{self.agent_type.lower()}-bg")
+                    thread_name_prefix=f"{self.agent_type.lower()}-bg-{queue}")
             if dedup_key is not None:
                 self._bg_keys.add(dedup_key)
             self._bg_inflight += 1
             if self._bg_inflight == 1:
                 self.set_processing()
             try:
-                self._bg_executor.submit(self._bg_run, fn, args, kwargs, dedup_key, label)
+                self._bg_executor[queue].submit(
+                    self._bg_run, fn, args, kwargs, dedup_key, label, queue)
             except Exception as e:
                 # Pool refused the task — roll back the bookkeeping we just did.
                 self._bg_inflight -= 1
@@ -621,9 +630,11 @@ class BaseAgent(stomp.ConnectionListener):
                 return False
         return True
 
-    def _bg_run(self, fn, args, kwargs, dedup_key, label):
+    def _bg_run(self, fn, args, kwargs, dedup_key, label, queue):
         """Worker-thread wrapper: run the task, swallow nothing, and keep the
         in-flight count / PROCESSING state correct on the way out."""
+        with self._bg_lock:
+            self._bg_active[queue] = self._bg_active.get(queue, 0) + 1
         try:
             fn(*args, **kwargs)
         except Exception as e:
@@ -631,11 +642,36 @@ class BaseAgent(stomp.ConnectionListener):
                 f"{self.agent_name} background '{label}' raised: {e}", exc_info=True)
         finally:
             with self._bg_lock:
+                self._bg_active[queue] -= 1
                 self._bg_inflight -= 1
                 if dedup_key is not None:
                     self._bg_keys.discard(dedup_key)
                 if self._bg_inflight == 0:
                     self.set_ready()
+
+    def get_background_pool_status(self):
+        """Return a snapshot of each background worker pool's load.
+
+        Returns a dict keyed by queue name, e.g.::
+
+            {'default': {'max_workers': 4, 'active': 2, 'waiting': 5}}
+
+        - ``active``: tasks currently executing on that queue's pool.
+        - ``waiting``: tasks submitted to that queue but not yet picked up by
+          a worker thread.
+
+        Only queues that have had at least one ``run_in_background`` call are
+        included (pools are created lazily).
+        """
+        status = {}
+        with self._bg_lock:
+            for queue, pool in self._bg_executor.items():
+                status[queue] = {
+                    'max_workers': pool._max_workers,
+                    'active': self._bg_active.get(queue, 0),
+                    'waiting': pool._work_queue.qsize(),
+                }
+        return status
 
     def get_next_agent_id(self):
         """Get the next agent ID from persistent state API."""
